@@ -1,0 +1,26 @@
+graph TB
+    subgraph "Job Submission & Management"
+        A[User/Client] -->|Submit Job| B[Job Manager]
+        B -->|Queue Job| C[Job Queue]
+        B -->|Update Status| D[(Database)]
+    end
+
+    subgraph "Resource Management"
+        C -->|Request GPU| E[GPU Allocator]
+        E -->|Check Available| F[Base GPUs]
+        E -->|Request if needed| G[Spot Manager]
+        G -->|Provision| H[Spot GPUs]
+    end
+
+    subgraph "Job Execution"
+        E -->|Assign GPU| I[Model Runner]
+        I -->|Execute| J[GPU Hardware]
+        I -->|Log Results| D
+    end
+
+    subgraph "Monitoring & Optimization"
+        K[Metrics Collector] -->|Read| D
+        K -->|Export| L[Prometheus]
+        L -->|Visualize| M[Grafana Dashboard]
+        K -->|Track| N[Cost Optimization]
+    end

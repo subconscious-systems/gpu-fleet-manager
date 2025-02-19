@@ -1,0 +1,18 @@
+stateDiagram-v2
+    [*] --> QUEUED
+    QUEUED --> RUNNING
+    RUNNING --> COMPLETED
+    RUNNING --> FAILED
+    QUEUED --> CANCELLED
+    RUNNING --> CANCELLED
+    FAILED --> [*]
+    COMPLETED --> [*]
+    CANCELLED --> [*]
+
+    state RUNNING {
+        [*] --> LOADING
+        LOADING --> PROCESSING
+        PROCESSING --> ERROR
+        ERROR --> [*]
+        PROCESSING --> [*]
+    }

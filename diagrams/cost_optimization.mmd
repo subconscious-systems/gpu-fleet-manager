@@ -1,0 +1,16 @@
+flowchart LR
+    subgraph "Cost Optimization Strategies"
+        A[Spot Instance Manager] -->|Calculate| D[Cost Savings]
+        B[Batch Optimizer] -->|Calculate| D
+        C[Autoscaler] -->|Calculate| D
+        
+        D -->|Update| E[Metrics]
+        E -->|Display| F[Dashboard]
+        E -->|Trigger| G[Alerts]
+    end
+
+    subgraph "Efficiency Scoring"
+        H[Utilization Score] -->|40%| K[Final Score]
+        I[Cost Score] -->|30%| K
+        J[Throughput Score] -->|30%| K
+    end
