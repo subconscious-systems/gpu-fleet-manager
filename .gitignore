@@ -53,3 +53,14 @@ htmlcov/
 # Temporary files
 *.tmp
 .DS_Store
+
+# Monitoring
+grafana_data/
+prometheus_data/
+letsencrypt/
+.env.production
+
+# Keep templates
+!grafana/provisioning/
+!grafana/grafana.ini
+!prometheus/prometheus.yml

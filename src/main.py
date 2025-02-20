@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import logging
 import os
+import asyncio
+from contextlib import asynccontextmanager
 
 from src.api import jobs, gpus, monitoring
 from src.utils.monitoring import setup_monitoring
@@ -15,11 +17,24 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start monitoring in the background
+    monitoring_task = asyncio.create_task(setup_monitoring(metrics_port=9402))  # Changed from 9401
+    yield
+    # Cancel monitoring on shutdown
+    monitoring_task.cancel()
+    try:
+        await monitoring_task
+    except asyncio.CancelledError:
+        pass
+
 # Initialize FastAPI app
 app = FastAPI(
     title="GPU Fleet Manager",
     description="API for managing GPU jobs and resources",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Configure CORS
@@ -34,9 +49,6 @@ app.add_middleware(
 # Mount static files
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
-
-# Setup monitoring
-setup_monitoring()
 
 # Include routers
 app.include_router(

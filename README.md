@@ -55,6 +55,7 @@ The demo interface allows you to:
 - [Job Lifecycle](#job-lifecycle)
 - [Getting Started](#getting-started)
 - [Demo System](#demo-system)
+- [Production Deployment](#production-deployment)
 
 ## System Architecture
 
@@ -270,3 +271,93 @@ finally:
    - Use connection pooling
    - Implement caching
    - Optimize queries
+
+## Production Deployment
+
+### Prerequisites
+1. A domain name pointing to your server
+2. Auth0 account and application set up
+3. Docker and Docker Compose installed on your server
+
+### Setup Instructions
+
+1. Clone this repository to your server:
+   ```bash
+   git clone https://github.com/your-org/gpu-fleet-manager.git
+   cd gpu-fleet-manager
+   ```
+
+2. Copy the production environment template:
+   ```bash
+   cp .env.production .env
+   ```
+
+3. Edit the `.env` file with your configuration:
+   - Set a secure `GRAFANA_ADMIN_PASSWORD`
+   - Configure Auth0 credentials (`AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET`)
+   - Set your `ACME_EMAIL` for Let's Encrypt notifications
+   - Update `DOMAIN` to your domain name
+
+4. Configure Auth0:
+   - Create a new Application in Auth0
+   - Set the allowed callback URLs:
+     ```
+     https://your-domain.com/grafana/login/generic_oauth
+     ```
+   - Set the allowed logout URLs:
+     ```
+     https://your-domain.com/grafana
+     ```
+   - Add the following rules to map roles:
+     ```javascript
+     function (user, context, callback) {
+       const namespace = 'https://your-domain.com';
+       if (context.authorization && context.authorization.roles) {
+         context.idToken[namespace + '/roles'] = context.authorization.roles;
+         context.accessToken[namespace + '/roles'] = context.authorization.roles;
+       }
+       callback(null, user, context);
+     }
+     ```
+
+5. Update the domain in docker-compose.yml:
+   - Replace all instances of `your-domain.com` with your actual domain
+
+6. Start the services:
+   ```bash
+   docker-compose -f docker-compose.yml up -d
+   ```
+
+7. Access your dashboard:
+   - Go to `https://your-domain.com/grafana`
+   - Log in with your organization credentials via Auth0
+
+### Security Notes
+- All traffic is encrypted via HTTPS
+- Authentication is handled by Auth0
+- Users are automatically assigned roles based on their Auth0 groups
+- The admin interface is only accessible to users with the admin role
+
+### Monitoring Stack
+- **Traefik**: Handles routing and SSL termination
+- **Grafana**: Visualization and dashboards
+- **Prometheus**: Metrics collection and storage
+
+### Adding Users
+1. Users should be managed through Auth0
+2. Assign users to groups in Auth0:
+   - `admin`: Full access
+   - `editor`: Can edit dashboards
+   - `viewer`: Can only view dashboards
+
+### Backup
+The following volumes should be backed up regularly:
+- `prometheus_data`: Contains historical metrics
+- `grafana_data`: Contains dashboard configurations
+- `letsencrypt`: Contains SSL certificates
+
+### Troubleshooting
+- Check container logs: `docker-compose logs -f [service]`
+- Verify Auth0 configuration
+- Check Traefik logs for routing issues
+- Ensure all environment variables are properly set
