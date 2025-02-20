@@ -1,165 +1,112 @@
-from __future__ import annotations
-
+from typing import List, Optional, Dict, Any
 from datetime import datetime
-from typing import Dict, List, Optional, Union
 
-from fastapi import HTTPException
-
-from .supabase_client import SupabaseClient, requires_db
+from src.models.domain import (
+    JobCreate, JobUpdate, JobResponse,
+    GPUCreate, GPUUpdate, GPUResponse,
+    JobStatus, GPUStatus
+)
+from src.db.supabase_client import SupabaseClient
 
 class Repository:
-    """Repository pattern implementation for database operations."""
+    """Repository for database operations"""
     
-    def __init__(self, client: SupabaseClient) -> None:
+    def __init__(self, client: SupabaseClient):
+        """Initialize repository with database client"""
         self.client = client
 
-    @requires_db
-    async def get_organization(self, org_id: str) -> Dict[str, Any]:
-        """Get organization by ID."""
-        result = await self.client.select(
-            "organizations",
-            filters={"id": f"eq.{org_id}"},
-            limit=1
-        )
-        if not result:
-            raise HTTPException(status_code=404, detail="Organization not found")
-        return result[0]
-
-    @requires_db
-    async def get_gpu_jobs(
-        self,
-        org_id: str,
-        status: Optional[str] = None,
-        limit: int = 100
-    ) -> List[Dict[str, Any]]:
-        """Get GPU jobs for organization."""
-        filters = {"organization_id": f"eq.{org_id}"}
-        if status:
-            filters["status"] = f"eq.{status}"
-            
-        return await self.client.select(
-            "gpu_jobs",
-            filters=filters,
-            order="created_at.desc",
-            limit=limit
-        )
-
-    @requires_db
-    async def create_gpu_job(
-        self,
-        org_id: str,
-        job_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Create new GPU job."""
-        job_data.update({
-            "organization_id": org_id,
-            "status": "pending",
-            "created_at": datetime.utcnow().isoformat(),
-        })
-        
-        return await self.client.insert("gpu_jobs", job_data)
-
-    @requires_db
-    async def update_gpu_job(
-        self,
-        job_id: str,
-        org_id: str,
-        updates: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Update GPU job."""
-        updates["updated_at"] = datetime.utcnow().isoformat()
-        
-        result = await self.client.update(
-            "gpu_jobs",
-            updates,
-            filters={
-                "id": f"eq.{job_id}",
-                "organization_id": f"eq.{org_id}"
-            }
-        )
-        
-        if not result:
-            raise HTTPException(status_code=404, detail="Job not found")
-        return result[0]
-
-    @requires_db
-    async def get_available_gpus(
-        self,
-        org_id: str,
-        min_memory: Optional[int] = None,
-        gpu_type: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        """Get available GPUs matching criteria."""
-        filters = {
-            "organization_id": f"eq.{org_id}",
-            "status": "eq.available"
+    async def create_job(self, job: JobCreate) -> JobResponse:
+        """Create a new job"""
+        job_data = {
+            **job.model_dump(),
+            "status": JobStatus.QUEUED,
+            "created_at": datetime.utcnow().isoformat()
         }
         
-        if min_memory:
-            filters["memory_gb"] = f"gte.{min_memory}"
-        if gpu_type:
-            filters["gpu_type"] = f"eq.{gpu_type}"
+        result = await self.client.table("jobs").insert(job_data).execute()
+        if result.error:
+            raise Exception(f"Failed to create job: {result.error}")
             
-        return await self.client.select(
-            "gpus",
-            filters=filters,
-            order="memory_gb.desc"
-        )
+        return JobResponse(**result.data[0])
 
-    @requires_db
-    async def allocate_gpu(
+    async def get_job(self, job_id: str) -> Optional[JobResponse]:
+        """Get job by ID"""
+        result = await self.client.table("jobs").select("*").eq("id", job_id).execute()
+        if result.error:
+            raise Exception(f"Failed to get job: {result.error}")
+            
+        return JobResponse(**result.data[0]) if result.data else None
+
+    async def list_jobs(
         self,
-        gpu_id: str,
-        job_id: str,
-        org_id: str
-    ) -> Dict[str, Any]:
-        """Allocate GPU to job with optimistic locking."""
-        # First verify GPU is available
-        gpu = await self.client.select(
-            "gpus",
-            filters={
-                "id": f"eq.{gpu_id}",
-                "organization_id": f"eq.{org_id}",
-                "status": "eq.available"
-            }
-        )
+        organization_id: str,
+        status: Optional[JobStatus] = None,
+        limit: int = 100
+    ) -> List[JobResponse]:
+        """List jobs for organization"""
+        query = self.client.table("jobs").select("*").eq("organization_id", organization_id)
         
-        if not gpu:
-            raise HTTPException(
-                status_code=409,
-                detail="GPU not available for allocation"
-            )
+        if status:
+            query = query.eq("status", status)
             
-        # Update GPU status atomically
-        return await self.client.update(
-            "gpus",
-            {
-                "status": "allocated",
-                "job_id": job_id,
-                "allocated_at": datetime.utcnow().isoformat()
-            },
-            filters={
-                "id": f"eq.{gpu_id}",
-                "status": "eq.available"  # Ensures GPU wasn't allocated elsewhere
-            }
-        )
+        result = await query.limit(limit).execute()
+        if result.error:
+            raise Exception(f"Failed to list jobs: {result.error}")
+            
+        return [JobResponse(**item) for item in result.data]
 
-    @requires_db
-    async def release_gpu(
+    async def update_job(self, job_id: str, job_update: JobUpdate) -> Optional[JobResponse]:
+        """Update job details"""
+        result = await self.client.table("jobs").update(job_update.model_dump()).eq("id", job_id).execute()
+        if result.error:
+            raise Exception(f"Failed to update job: {result.error}")
+            
+        return JobResponse(**result.data[0]) if result.data else None
+
+    async def create_gpu(self, gpu: GPUCreate) -> GPUResponse:
+        """Create a new GPU"""
+        gpu_data = {
+            **gpu.model_dump(),
+            "status": GPUStatus.AVAILABLE,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        
+        result = await self.client.table("gpus").insert(gpu_data).execute()
+        if result.error:
+            raise Exception(f"Failed to create GPU: {result.error}")
+            
+        return GPUResponse(**result.data[0])
+
+    async def get_gpu(self, gpu_id: str) -> Optional[GPUResponse]:
+        """Get GPU by ID"""
+        result = await self.client.table("gpus").select("*").eq("id", gpu_id).execute()
+        if result.error:
+            raise Exception(f"Failed to get GPU: {result.error}")
+            
+        return GPUResponse(**result.data[0]) if result.data else None
+
+    async def list_gpus(
         self,
-        gpu_id: str,
-        org_id: str
-    ) -> Dict[str, Any]:
-        """Release GPU back to available pool."""
-        return await self.client.update(
-            "gpus",
-            {
-                "status": "available",
-                "job_id": None,
-                "allocated_at": None
-            },
-            filters={
-                "id": f"eq.{gpu_id}",
-                "organization_id": f"eq.{org_id}"
-            }
-        )
+        organization_id: str,
+        status: Optional[GPUStatus] = None,
+        limit: int = 100
+    ) -> List[GPUResponse]:
+        """List GPUs for organization"""
+        query = self.client.table("gpus").select("*").eq("organization_id", organization_id)
+        
+        if status:
+            query = query.eq("status", status)
+            
+        result = await query.limit(limit).execute()
+        if result.error:
+            raise Exception(f"Failed to list GPUs: {result.error}")
+            
+        return [GPUResponse(**item) for item in result.data]
+
+    async def update_gpu(self, gpu_id: str, gpu_update: GPUUpdate) -> Optional[GPUResponse]:
+        """Update GPU details"""
+        result = await self.client.table("gpus").update(gpu_update.model_dump()).eq("id", gpu_id).execute()
+        if result.error:
+            raise Exception(f"Failed to update GPU: {result.error}")
+            
+        return GPUResponse(**result.data[0]) if result.data else None

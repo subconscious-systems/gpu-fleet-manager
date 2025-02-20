@@ -1,41 +1,74 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_client import make_asgi_app
+from fastapi.staticfiles import StaticFiles
+import logging
+import os
 
-# Import routers
-from api import jobs, gpus, monitoring
+from src.api import jobs, gpus, monitoring
+from src.utils.monitoring import setup_monitoring
+from dotenv import load_dotenv
 
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize FastAPI app
 app = FastAPI(
     title="GPU Fleet Manager",
-    description="Distributed GPU management system for ML model execution",
-    version="0.1.0"
+    description="API for managing GPU jobs and resources",
+    version="1.0.0"
 )
 
-# Add CORS middleware
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Add Prometheus metrics endpoint
-metrics_app = make_asgi_app()
-app.mount("/metrics", metrics_app)
+# Mount static files
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# Setup monitoring
+setup_monitoring()
 
 # Include routers
-app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["jobs"])
-app.include_router(gpus.router, prefix="/api/v1/gpus", tags=["gpus"])
-app.include_router(monitoring.router, prefix="/api/v1/monitoring", tags=["monitoring"])
+app.include_router(
+    jobs.router,
+    prefix="/api/v1",
+    tags=["jobs"]
+)
 
+app.include_router(
+    gpus.router,
+    prefix="/api/v1",
+    tags=["gpus"]
+)
+
+app.include_router(
+    monitoring.router,
+    prefix="/api/v1",
+    tags=["monitoring"]
+)
+
+# Root endpoint to serve the demo UI
 @app.get("/")
 async def root():
-    return {
-        "status": "healthy",
-        "version": "0.1.0",
-        "docs_url": "/docs"
-    }
+    """Serve the demo UI"""
+    from fastapi.responses import FileResponse
+    return FileResponse(os.path.join(static_dir, "index.html"))
+
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy"}
 
 if __name__ == "__main__":
     import uvicorn

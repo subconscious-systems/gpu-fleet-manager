@@ -10,12 +10,14 @@ NC='\033[0m'
 echo -e "${BLUE}🚀 Starting GPU Fleet Manager Demo${NC}"
 
 # Activate virtual environment
-if [ -d "venv" ]; then
-    echo -e "${GREEN}✓ Activating virtual environment${NC}"
-    source venv/bin/activate
+if [ ! -d "venv_py311" ]; then
+    echo -e "${RED}✗ Virtual environment not found. Creating one...${NC}"
+    python3.11 -m venv venv_py311
+    source venv_py311/bin/activate
+    pip install --no-cache-dir -r requirements.txt
 else
-    echo -e "${RED}✗ Virtual environment not found${NC}"
-    exit 1
+    echo -e "${GREEN}✓ Activating virtual environment${NC}"
+    source venv_py311/bin/activate
 fi
 
 # Check if .env file exists
@@ -26,11 +28,13 @@ fi
 
 # Export environment variables
 echo -e "${GREEN}✓ Loading environment variables${NC}"
-export $(cat .env | grep -v ^# | xargs)
+set -a
+source .env
+set +a
 
 # Start the FastAPI server in the background
 echo -e "${GREEN}✓ Starting API server${NC}"
-python -m uvicorn src.main:app --reload --port 8000 &
+uvicorn src.main:app --reload --port 8000 &
 API_PID=$!
 
 # Wait for the API server to start

@@ -1,176 +1,199 @@
-from typing import Optional, List, Dict
+from typing import List, Optional, Dict, Any
 import logging
-from datetime import datetime, timedelta
-import asyncio
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc
+from datetime import datetime
 
-from ..models.job import Job, JobStatus, JobPriority, ComputeStatus
-from ..models.gpu import GPU, GPUStatus
-from .gpu_allocator import GPUAllocator
-from ..utils.monitoring import monitor
-from ..utils.model_runner import ModelRunner
-from ..utils.cost_tracker import CostTracker
+from src.db.repository import Repository
+from src.models.domain import (
+    JobCreate, JobUpdate, JobResponse,
+    JobStatus, GPUStatus
+)
+from src.core.gpu_allocator import GPUAllocator
+from src.utils.model_runner import ModelRunner
 
 logger = logging.getLogger(__name__)
 
 class JobManager:
-    def __init__(
-        self,
-        db: Session,
-        gpu_allocator: GPUAllocator,
-        model_runner: ModelRunner,
-        cost_tracker: CostTracker
-    ):
-        self.db = db
-        self.gpu_allocator = gpu_allocator
-        self.model_runner = model_runner
-        self.cost_tracker = cost_tracker
-        self.is_running = False
-        self._queue_processor_task = None
-
-    async def submit_job(self, job_data: Dict) -> Job:
-        """Submit a new job to the queue"""
-        # Calculate memory requirements based on model and batch size
-        memory_required = self._calculate_memory_required(
-            job_data["model_name"],
-            job_data.get("batch_size", 1)
-        )
-
-        job = Job(
-            name=job_data.get("name", f"job-{datetime.utcnow().isoformat()}"),
-            model_type=job_data["model_type"],
-            model_name=job_data["model_name"],
-            priority=job_data.get("priority", JobPriority.NORMAL),
-            organization_id=job_data["organization_id"],
-            user_id=job_data["user_id"],
-            input_data=job_data["parameters"],
-            memory_required=memory_required,
-            timeout_seconds=job_data.get("timeout_seconds", 3600),
-            status=JobStatus.QUEUED,
-            compute_status=None  # No compute assigned yet
-        )
-        
-        self.db.add(job)
-        self.db.commit()
-        
-        # Start queue processor if not running
-        await self.ensure_queue_processor_running()
-        
-        return job
-
-    def _calculate_memory_required(self, model_name: str, batch_size: int) -> int:
-        """Calculate memory requirements for a model"""
-        base_memory = self.gpu_allocator.model_requirements.get(model_name, {
-            "min_memory": 8000
-        })["min_memory"]
-        
-        # Scale memory by batch size with some overhead
-        return int(base_memory * batch_size * 1.2)  # 20% overhead
-
-    @monitor
-    async def process_queue(self):
-        """Process the job queue continuously"""
-        while self.is_running:
-            try:
-                # Get next batch of jobs, ordered by priority and creation time
-                pending_jobs = self.db.query(Job).filter(
-                    and_(
-                        Job.status == JobStatus.QUEUED,
-                        Job.compute_status.is_(None)
-                    )
-                ).order_by(
-                    desc(Job.priority),
-                    Job.created_at
-                ).limit(10).all()
-
-                for job in pending_jobs:
-                    try:
-                        # Try to allocate GPU
-                        gpu = await self.gpu_allocator.allocate_for_job(job)
-                        
-                        if gpu:
-                            # Run the job
-                            job.status = JobStatus.RUNNING
-                            self.db.commit()
-                            
-                            try:
-                                result = await self.model_runner.run_job(job, gpu)
-                                job.output_data = result
-                                job.status = JobStatus.COMPLETED
-                            except Exception as e:
-                                logger.error(f"Job {job.id} failed: {e}")
-                                job.error_message = str(e)
-                                job.status = JobStatus.FAILED
-                            finally:
-                                # Always release the GPU
-                                await self.gpu_allocator.release_gpu(gpu, job)
-                        else:
-                            # No GPU available, keep job queued
-                            continue
-
-                    except Exception as e:
-                        logger.error(f"Error processing job {job.id}: {e}")
-                        job.error_message = str(e)
-                        job.status = JobStatus.FAILED
-                    finally:
-                        self.db.commit()
-
-            except Exception as e:
-                logger.error(f"Error in queue processor: {e}")
+    """Manager for job lifecycle and GPU allocation"""
+    
+    def __init__(self, repo: Repository):
+        """Initialize job manager"""
+        self.repo = repo
+        self.gpu_allocator = GPUAllocator(repo)
+        self.model_runner = ModelRunner()
+    
+    async def create_job(self, job: JobCreate) -> JobResponse:
+        """Create and queue a new job"""
+        try:
+            # Create job in queued state
+            created_job = await self.repo.create_job(job)
+            logger.info(f"Created job {created_job.id} for organization {job.organization_id}")
             
-            # Wait before next batch
-            await asyncio.sleep(5)
-
-    async def ensure_queue_processor_running(self):
-        """Ensure the queue processor is running"""
-        if not self.is_running:
-            self.is_running = True
-            self._queue_processor_task = asyncio.create_task(self.process_queue())
-
-    async def stop_queue_processor(self):
-        """Stop the queue processor"""
-        self.is_running = False
-        if self._queue_processor_task:
-            await self._queue_processor_task
-            self._queue_processor_task = None
-
-    async def get_job_status(self, job_id: str, organization_id: str) -> Optional[Job]:
-        """Get the status of a specific job"""
-        return self.db.query(Job).filter(
-            and_(
-                Job.id == job_id,
-                Job.organization_id == organization_id
-            )
-        ).first()
-
-    async def cancel_job(self, job_id: str, organization_id: str) -> bool:
-        """Cancel a job if it hasn't started"""
-        job = await self.get_job_status(job_id, organization_id)
-        
-        if not job or job.status not in [JobStatus.QUEUED, JobStatus.RUNNING]:
-            return False
-
-        if job.status == JobStatus.RUNNING and job.gpu_id:
-            gpu = self.db.query(GPU).get(job.gpu_id)
-            if gpu:
-                await self.gpu_allocator.release_gpu(gpu, job)
-
-        job.status = JobStatus.CANCELLED
-        self.db.commit()
-        return True
-
-    async def get_organization_jobs(
+            # Try to allocate GPU and start job immediately if possible
+            await self._try_allocate_and_start(created_job)
+            
+            return created_job
+            
+        except Exception as e:
+            logger.error(f"Error creating job: {str(e)}")
+            raise
+    
+    async def get_job(self, job_id: str) -> Optional[JobResponse]:
+        """Get job by ID"""
+        return await self.repo.get_job(job_id)
+    
+    async def list_jobs(
         self,
         organization_id: str,
         status: Optional[JobStatus] = None,
-        limit: int = 100,
-        offset: int = 0
-    ) -> List[Job]:
-        """Get jobs for an organization"""
-        query = self.db.query(Job).filter(Job.organization_id == organization_id)
-        
-        if status:
-            query = query.filter(Job.status == status)
+        limit: int = 100
+    ) -> List[JobResponse]:
+        """List jobs for organization"""
+        return await self.repo.list_jobs(organization_id, status, limit)
+    
+    async def update_job(self, job_id: str, job_update: JobUpdate) -> Optional[JobResponse]:
+        """Update job details"""
+        return await self.repo.update_job(job_id, job_update)
+    
+    async def cancel_job(self, job_id: str) -> Optional[JobResponse]:
+        """Cancel a job"""
+        try:
+            # Get current job state
+            job = await self.repo.get_job(job_id)
+            if not job:
+                return None
+                
+            # Can only cancel queued or running jobs
+            if job.status not in [JobStatus.QUEUED, JobStatus.RUNNING]:
+                raise ValueError(f"Cannot cancel job in {job.status} state")
+                
+            # Update job status
+            updated_job = await self.repo.update_job(
+                job_id,
+                JobUpdate(
+                    status=JobStatus.CANCELLED,
+                    completed_at=datetime.utcnow().isoformat()
+                )
+            )
             
-        return query.order_by(desc(Job.created_at)).offset(offset).limit(limit).all()
+            # Release GPU if job was running
+            if job.status == JobStatus.RUNNING and job.gpu_id:
+                await self.gpu_allocator.release_gpu(job.gpu_id)
+                # Try to start next job in queue
+                await self._process_queue(job.organization_id)
+                
+            return updated_job
+            
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.error(f"Error cancelling job {job_id}: {str(e)}")
+            raise
+    
+    async def _try_allocate_and_start(self, job: JobResponse) -> None:
+        """Try to allocate GPU and start job"""
+        try:
+            # Try to allocate GPU
+            gpu = await self.gpu_allocator.allocate_for_job(job)
+            if not gpu:
+                logger.info(f"No GPU available for job {job.id}, keeping in queue")
+                return
+                
+            # Update job with allocated GPU
+            await self.repo.update_job(
+                job.id,
+                JobUpdate(
+                    status=JobStatus.RUNNING,
+                    gpu_id=gpu.id
+                )
+            )
+            
+            # Start job execution
+            self._start_job_execution(job, gpu)
+            
+        except Exception as e:
+            logger.error(f"Error allocating GPU for job {job.id}: {str(e)}")
+            # Update job status to failed
+            await self.repo.update_job(
+                job.id,
+                JobUpdate(
+                    status=JobStatus.FAILED,
+                    error=f"Failed to allocate GPU: {str(e)}",
+                    completed_at=datetime.utcnow().isoformat()
+                )
+            )
+    
+    def _start_job_execution(self, job: JobResponse, gpu: Any) -> None:
+        """Start job execution in background task"""
+        try:
+            # Run job asynchronously
+            self.model_runner.run_job_async(
+                job_id=job.id,
+                model_type=job.model_type,
+                prompt=job.prompt,
+                gpu_id=gpu.id,
+                callback=self._handle_job_completion
+            )
+            logger.info(f"Started execution of job {job.id} on GPU {gpu.id}")
+            
+        except Exception as e:
+            logger.error(f"Error starting job {job.id}: {str(e)}")
+            # Update job status to failed
+            self._handle_job_completion(
+                job.id,
+                success=False,
+                error=f"Failed to start job: {str(e)}"
+            )
+    
+    async def _handle_job_completion(
+        self,
+        job_id: str,
+        success: bool,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None
+    ) -> None:
+        """Handle job completion callback"""
+        try:
+            # Get current job state
+            job = await self.repo.get_job(job_id)
+            if not job:
+                logger.error(f"Job {job_id} not found for completion callback")
+                return
+                
+            # Update job status
+            status = JobStatus.COMPLETED if success else JobStatus.FAILED
+            await self.repo.update_job(
+                job_id,
+                JobUpdate(
+                    status=status,
+                    result=result,
+                    error=error,
+                    completed_at=datetime.utcnow().isoformat()
+                )
+            )
+            
+            # Release GPU
+            if job.gpu_id:
+                await self.gpu_allocator.release_gpu(job.gpu_id)
+                
+            # Try to start next job in queue
+            await self._process_queue(job.organization_id)
+            
+        except Exception as e:
+            logger.error(f"Error handling completion of job {job_id}: {str(e)}")
+    
+    async def _process_queue(self, organization_id: str) -> None:
+        """Process queued jobs for organization"""
+        try:
+            # Get queued jobs
+            queued_jobs = await self.repo.list_jobs(
+                organization_id=organization_id,
+                status=JobStatus.QUEUED,
+                limit=10
+            )
+            
+            # Try to start each job
+            for job in queued_jobs:
+                await self._try_allocate_and_start(job)
+                
+        except Exception as e:
+            logger.error(f"Error processing queue for org {organization_id}: {str(e)}")

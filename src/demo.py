@@ -1,16 +1,11 @@
 import asyncio
 import logging
 from datetime import datetime
-from sqlalchemy.orm import Session
+from src.core.job_manager import JobManager
+from src.db.repository import Repository
+from src.db.supabase_client import SupabaseClient, SupabaseConfig
 from dotenv import load_dotenv
 import os
-
-from core.job_manager import JobManager
-from core.gpu_allocator import GPUAllocator
-from utils.model_runner import get_model_runner
-from utils.spot_manager import SpotManager
-from utils.cost_tracker import CostTracker
-from models.database import init_db, get_db
 
 # Configure logging
 logging.basicConfig(
@@ -87,18 +82,16 @@ async def main():
         # Load environment variables
         load_dotenv()
         
-        # Initialize database
-        init_db()
-        db = next(get_db())
+        # Initialize database client
+        config = SupabaseConfig(
+            url="your_supabase_url",
+            key="your_supabase_key"
+        )
+        client = await SupabaseClient.get_instance(config)
+        repo = Repository(client)
         
-        # Initialize components
-        spot_manager = SpotManager()
-        cost_tracker = CostTracker(db)
-        model_runner = get_model_runner()
-        
-        # Initialize core components
-        gpu_allocator = GPUAllocator(db, spot_manager, cost_tracker)
-        job_manager = JobManager(db, gpu_allocator, model_runner, cost_tracker)
+        # Initialize job manager
+        job_manager = JobManager(repo)
         
         # Demo organization
         organization_id = "demo-org-123"
@@ -132,7 +125,7 @@ async def main():
     finally:
         # Cleanup
         await job_manager.stop_queue_processor()
-        await model_runner.cleanup()
+        await client.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

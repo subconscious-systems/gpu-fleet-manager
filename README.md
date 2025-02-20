@@ -2,6 +2,52 @@
 
 A high-performance GPU resource management system with intelligent job scheduling and multi-tenant support.
 
+## Quick Demo Setup
+
+1. **Environment Setup**:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+2. **Configuration**:
+   Create or update `.env` file with your Supabase credentials:
+   ```
+   SUPABASE_URL=your_url
+   SUPABASE_KEY=your_key
+   ```
+
+3. **Database Setup**:
+   - Run the initial schema migration in Supabase SQL Editor:
+     ```sql
+     -- Copy contents of migrations/001_initial_schema.sql
+     ```
+   - Create a demo organization and GPU:
+     ```sql
+     INSERT INTO organizations (id, name) 
+     VALUES ('demo-org', 'Demo Organization');
+     
+     INSERT INTO gpu_resources (id, name, organization_id, memory_total, status) 
+     VALUES 
+       ('gpu-1', 'NVIDIA A100', 'demo-org', 81920, 'available'),
+       ('gpu-2', 'NVIDIA A100', 'demo-org', 81920, 'available');
+     ```
+
+4. **Run the Demo**:
+   ```bash
+   python -m uvicorn src.main:app --reload
+   ```
+
+5. **Access the Demo UI**:
+   Open [http://localhost:8000](http://localhost:8000) in your browser
+
+The demo interface allows you to:
+- View available GPU resources
+- Submit new jobs
+- Monitor job status in real-time
+- See GPU allocation changes
+
 ## Table of Contents
 - [System Architecture](#system-architecture)
 - [Core Components](#core-components)

@@ -9,37 +9,35 @@ from urllib.parse import urljoin
 import httpx
 from fastapi import HTTPException
 from tenacity import retry, stop_after_attempt, wait_exponential
+import logging
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-@dataclass
-class SupabaseConfig:
-    """Configuration for Supabase client."""
+from pydantic import BaseModel
+from supabase import create_client, Client
+
+class SupabaseConfig(BaseModel):
+    """Supabase configuration"""
     url: str
     key: str
-    timeout: float = 10.0
-    max_connections: int = 10
-    retry_attempts: int = 3
+
+class SupabaseResponse(BaseModel):
+    """Wrapper for Supabase responses"""
+    data: list = []
+    error: Optional[str] = None
 
 class SupabaseClient:
-    """High-performance Supabase client with connection pooling and retry logic."""
+    """Supabase client wrapper"""
     
     _instance: ClassVar[Optional[SupabaseClient]] = None
     _lock: ClassVar[asyncio.Lock] = asyncio.Lock()
     
-    def __init__(self, config: SupabaseConfig) -> None:
-        """Initialize client with configuration."""
+    def __init__(self, config: SupabaseConfig):
+        """Initialize Supabase client"""
         self.config = config
-        self.client = httpx.AsyncClient(
-            base_url=config.url,
-            timeout=config.timeout,
-            limits=httpx.Limits(max_connections=config.max_connections),
-            headers={
-                "apikey": config.key,
-                "Authorization": f"Bearer {config.key}",
-                "Content-Type": "application/json",
-            },
-        )
+        self._client: Optional[Client] = None
         
     @classmethod
     async def get_instance(cls, config: Optional[SupabaseConfig] = None) -> SupabaseClient:
@@ -51,110 +49,85 @@ class SupabaseClient:
                         raise ValueError("Config required for initial instance creation")
                     cls._instance = cls(config)
         return cls._instance
+    
+    @property
+    def client(self) -> Client:
+        """Get or create Supabase client"""
+        if not self._client:
+            self._client = create_client(
+                self.config.url,
+                self.config.key
+            )
+        return self._client
+    
+    def table(self, name: str) -> 'SupabaseTable':
+        """Get table reference"""
+        return SupabaseTable(self.client.table(name))
+    
+    async def close(self):
+        """Close client connection"""
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+    
+    async def __aenter__(self):
+        """Async context manager entry"""
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit with proper cleanup"""
+        await self.close()
 
-    def _build_endpoint(self, table: str) -> str:
-        """Build REST endpoint for table."""
-        return urljoin("/rest/v1/", table)
-
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
-        reraise=True
-    )
-    async def _request(
-        self,
-        method: str,
-        endpoint: str,
-        params: Optional[Dict[str, Any]] = None,
-        json: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Execute HTTP request with retry logic."""
+class SupabaseTable:
+    """Wrapper for Supabase table operations"""
+    
+    def __init__(self, table):
+        self.table = table
+        self._query = table
+    
+    def select(self, columns: str = "*") -> 'SupabaseTable':
+        """Select columns"""
+        self._query = self.table.select(columns)
+        return self
+    
+    def insert(self, data: Dict[str, Any]) -> 'SupabaseTable':
+        """Insert data"""
+        self._query = self.table.insert(data)
+        return self
+    
+    def update(self, data: Dict[str, Any]) -> 'SupabaseTable':
+        """Update data"""
+        self._query = self.table.update(data)
+        return self
+    
+    def delete(self) -> 'SupabaseTable':
+        """Delete data"""
+        self._query = self.table.delete()
+        return self
+    
+    def eq(self, column: str, value: Any) -> 'SupabaseTable':
+        """Add equality filter"""
+        self._query = self._query.eq(column, value)
+        return self
+    
+    def order(self, column: str, desc: bool = False) -> 'SupabaseTable':
+        """Order results"""
+        self._query = self._query.order(column, desc=desc)
+        return self
+    
+    def limit(self, count: int) -> 'SupabaseTable':
+        """Limit results"""
+        self._query = self._query.limit(count)
+        return self
+    
+    async def execute(self) -> SupabaseResponse:
+        """Execute query"""
         try:
-            response = await self.client.request(
-                method=method,
-                url=endpoint,
-                params=params,
-                json=json,
-            )
-            response.raise_for_status()
-            return cast(Dict[str, Any], response.json())
-        except httpx.HTTPError as e:
-            raise HTTPException(
-                status_code=e.response.status_code if hasattr(e, "response") else 500,
-                detail=str(e)
-            )
-
-    async def select(
-        self,
-        table: str,
-        *,
-        columns: str = "*",
-        filters: Optional[Dict[str, Any]] = None,
-        order: Optional[str] = None,
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        """Execute SELECT query with filtering and pagination."""
-        params = {"select": columns}
-        if filters:
-            params.update(filters)
-        if order:
-            params["order"] = order
-        if limit:
-            params["limit"] = str(limit)
-            
-        return await self._request(
-            method="GET",
-            endpoint=self._build_endpoint(table),
-            params=params,
-        )
-
-    async def insert(
-        self,
-        table: str,
-        data: Dict[str, Any],
-        *,
-        upsert: bool = False,
-    ) -> Dict[str, Any]:
-        """Insert data with optional upsert."""
-        headers = {"Prefer": "return=representation"}
-        if upsert:
-            headers["Prefer"] = "resolution=merge-duplicates," + headers["Prefer"]
-            
-        return await self._request(
-            method="POST",
-            endpoint=self._build_endpoint(table),
-            json=data,
-        )
-
-    async def update(
-        self,
-        table: str,
-        data: Dict[str, Any],
-        filters: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Update data with filtering."""
-        return await self._request(
-            method="PATCH",
-            endpoint=self._build_endpoint(table),
-            json=data,
-            params=filters,
-        )
-
-    async def delete(
-        self,
-        table: str,
-        filters: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Delete data with filtering."""
-        return await self._request(
-            method="DELETE",
-            endpoint=self._build_endpoint(table),
-            params=filters,
-        )
-
-    async def close(self) -> None:
-        """Close client connections."""
-        await self.client.aclose()
+            result = await self._query.execute()
+            return SupabaseResponse(data=result.data)
+        except Exception as e:
+            logger.error(f"Supabase query error: {str(e)}")
+            return SupabaseResponse(error=str(e))
 
 def requires_db(func: Callable[..., T]) -> Callable[..., T]:
     """Decorator to ensure DB client is initialized."""

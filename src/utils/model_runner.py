@@ -1,269 +1,170 @@
-from typing import Dict, Optional, Any
+from typing import Dict, Any, Optional
 import logging
-from datetime import datetime
-import importlib.util
-import sys
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from diffusers import StableDiffusionXLPipeline
+import gc
 
 logger = logging.getLogger(__name__)
 
-class BaseModelRunner:
-    """Base class for model execution, supports basic job processing without ML dependencies"""
+class ModelRunner:
+    """Efficient model runner with resource management"""
     
     def __init__(self):
-        self.supports_ml = False
-    
-    async def run_job(self, job: Any, gpu: Any) -> Dict[str, Any]:
-        """Basic job execution without ML features"""
-        return {
-            "output": "Model execution not supported in base runner",
-            "type": "text",
-            "metadata": {
-                "completed_at": datetime.utcnow().isoformat(),
-                "gpu_id": gpu.id if gpu else None,
-                "model_name": job.model_name if hasattr(job, 'model_name') else None,
-                "supports_ml": False
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.loaded_models: Dict[str, Any] = {}
+        self.model_configs = {
+            "text-generation": {
+                "model_id": "mistralai/Mistral-7B-v0.1",
+                "type": "text",
+                "max_length": 2048
+            },
+            "image-generation": {
+                "model_id": "stabilityai/stable-diffusion-xl-base-1.0",
+                "type": "image",
+                "max_batch_size": 4
             }
         }
     
-    async def cleanup(self):
-        """Cleanup resources"""
-        pass
-
-def get_model_runner(model_cache_dir: str = "./model_cache") -> Any:
-    """Factory function to get appropriate ModelRunner based on available dependencies"""
-    
-    # Check if ML dependencies are available
-    has_torch = importlib.util.find_spec("torch") is not None
-    has_transformers = importlib.util.find_spec("transformers") is not None
-    has_diffusers = importlib.util.find_spec("diffusers") is not None
-    
-    if all([has_torch, has_transformers, has_diffusers]):
-        # Import ML-enabled ModelRunner only if dependencies are available
+    async def run_job(self, job_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Run an inference job"""
         try:
-            from .ml_model_runner import MLModelRunner
-            logger.info("Using ML-enabled ModelRunner")
-            return MLModelRunner(model_cache_dir)
-        except Exception as e:
-            logger.warning(f"Failed to initialize ML ModelRunner: {e}")
-            return BaseModelRunner()
-    else:
-        logger.info("Using base ModelRunner (ML features disabled)")
-        return BaseModelRunner()
-
-# Only define MLModelRunner if dependencies are available
-if all([
-    importlib.util.find_spec("torch"),
-    importlib.util.find_spec("transformers"),
-    importlib.util.find_spec("diffusers")
-]):
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-    from diffusers import StableDiffusionXLPipeline
-    import asyncio
-    
-    class MLModelRunner(BaseModelRunner):
-        """ML-enabled model runner with full feature support"""
-        
-        def __init__(self, model_cache_dir: str = "./model_cache"):
-            super().__init__()
-            self.supports_ml = True
-            self.model_cache_dir = model_cache_dir
-            self.loaded_models = {}
-            self.model_configs = {
-                # LLM Models
-                "phi-2": {
-                    "model_id": "microsoft/phi-2",
-                    "type": "text-generation",
-                    "max_length": 2048,
-                    "temperature": 0.7,
-                    "top_p": 0.9
-                },
-                "deepseek-coder": {
-                    "model_id": "deepseek-ai/deepseek-coder-6.7b-instruct",
-                    "type": "text-generation",
-                    "max_length": 4096,
-                    "temperature": 0.7,
-                    "top_p": 0.95
-                },
-                # Stable Diffusion Models
-                "stable-diffusion-xl": {
-                    "model_id": "stabilityai/stable-diffusion-xl-base-1.0",
-                    "type": "image-generation",
-                    "guidance_scale": 7.5,
-                    "num_inference_steps": 50
-                }
-            }
-
-        async def run_job(self, job: Any, gpu: Any) -> Dict[str, Any]:
-            """Run a model inference job with ML support"""
-            try:
-                logger.info(f"Starting ML job {job.id} on GPU {gpu.id}")
-                
-                # Set CUDA device
-                torch.cuda.set_device(self._get_gpu_index(gpu))
-                
-                # Get model configuration
-                model_config = self.model_configs.get(job.model_name)
-                if not model_config:
-                    raise ValueError(f"Unsupported model: {job.model_name}")
-
-                # Load or get cached model
-                model_key = f"{job.model_name}_{gpu.id}"
-                if model_key not in self.loaded_models:
-                    model = await self._load_model(job.model_name, model_config)
-                    self.loaded_models[model_key] = model
-                else:
-                    model = self.loaded_models[model_key]
-
-                # Run inference based on model type
-                if model_config["type"] == "text-generation":
-                    result = await self._run_text_generation(
-                        model,
-                        job.input_data,
-                        model_config
-                    )
-                elif model_config["type"] == "image-generation":
-                    result = await self._run_image_generation(
-                        model,
-                        job.input_data,
-                        model_config
-                    )
-                else:
-                    raise ValueError(f"Unsupported model type: {model_config['type']}")
-
-                # Add metadata to result
-                result["metadata"] = {
-                    "completed_at": datetime.utcnow().isoformat(),
-                    "gpu_id": gpu.id,
-                    "model_name": job.model_name,
-                    "supports_ml": True
-                }
-
-                return result
-
-            except Exception as e:
-                logger.error(f"Error running ML job {job.id}: {e}")
-                raise
-
-        async def _load_model(self, model_name: str, config: Dict) -> Any:
-            """Load a model and return appropriate pipeline"""
-            try:
-                logger.info(f"Loading model {model_name}")
-                
-                if config["type"] == "text-generation":
-                    model = AutoModelForCausalLM.from_pretrained(
-                        config["model_id"],
-                        torch_dtype=torch.float16,
-                        device_map="auto",
-                        cache_dir=self.model_cache_dir
-                    )
-                    tokenizer = AutoTokenizer.from_pretrained(
-                        config["model_id"],
-                        cache_dir=self.model_cache_dir
-                    )
-                    return pipeline(
-                        "text-generation",
-                        model=model,
-                        tokenizer=tokenizer,
-                        device_map="auto"
-                    )
-
-                elif config["type"] == "image-generation":
-                    return StableDiffusionXLPipeline.from_pretrained(
-                        config["model_id"],
-                        torch_dtype=torch.float16,
-                        use_safetensors=True,
-                        variant="fp16",
-                        cache_dir=self.model_cache_dir
-                    ).to("cuda")
-
-            except Exception as e:
-                logger.error(f"Error loading model {model_name}: {e}")
-                raise
-
-        async def _run_text_generation(
-            self,
-            pipeline: Any,
-            input_data: Dict,
-            config: Dict
-        ) -> Dict[str, Any]:
-            """Run text generation inference"""
-            prompt = input_data.get("prompt")
-            if not prompt:
-                raise ValueError("No prompt provided for text generation")
-
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: pipeline(
-                    prompt,
-                    max_length=config["max_length"],
-                    temperature=config["temperature"],
-                    top_p=config["top_p"],
-                    num_return_sequences=1,
-                    pad_token_id=pipeline.tokenizer.eos_token_id
-                )
-            )
-
-            return {
-                "output": result[0]["generated_text"],
-                "type": "text"
-            }
-
-        async def _run_image_generation(
-            self,
-            pipeline: Any,
-            input_data: Dict,
-            config: Dict
-        ) -> Dict[str, Any]:
-            """Run image generation inference"""
-            prompt = input_data.get("prompt")
-            if not prompt:
-                raise ValueError("No prompt provided for image generation")
-
-            negative_prompt = input_data.get("negative_prompt", "")
-
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: pipeline(
-                    prompt=prompt,
-                    negative_prompt=negative_prompt,
-                    guidance_scale=config["guidance_scale"],
-                    num_inference_steps=config["num_inference_steps"]
-                ).images[0]
-            )
-
-            image_bytes = await loop.run_in_executor(
-                None,
-                lambda: self._convert_image_to_bytes(result)
-            )
-
-            return {
-                "output": image_bytes,
-                "type": "image"
-            }
-
-        def _get_gpu_index(self, gpu: Any) -> int:
-            """Get CUDA device index from GPU object"""
-            return 0
-
-        def _convert_image_to_bytes(self, image) -> bytes:
-            """Convert PIL Image to bytes"""
-            import io
-            img_byte_arr = io.BytesIO()
-            image.save(img_byte_arr, format='PNG')
-            return img_byte_arr.getvalue()
-
-        async def cleanup(self):
-            """Clean up loaded models and free GPU memory"""
-            for model in self.loaded_models.values():
-                try:
-                    model.to("cpu")
-                    del model
-                except Exception as e:
-                    logger.error(f"Error cleaning up model: {e}")
+            model_type = job_config.get("model_type", "text-generation")
+            model_config = self.model_configs.get(model_type)
             
+            if not model_config:
+                raise ValueError(f"Unsupported model type: {model_type}")
+            
+            # Load or get cached model
+            model = await self._get_model(model_type, model_config)
+            
+            if model_config["type"] == "text":
+                return await self._run_text_generation(model, job_config)
+            else:
+                return await self._run_image_generation(model, job_config)
+                
+        except Exception as e:
+            logger.error(f"Error running job: {str(e)}")
+            raise
+    
+    async def _get_model(self, model_type: str, config: Dict[str, Any]) -> Any:
+        """Get or load a model with efficient resource management"""
+        if model_type in self.loaded_models:
+            return self.loaded_models[model_type]
+        
+        try:
+            # Clear GPU memory if needed
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                gc.collect()
+            
+            if config["type"] == "text":
+                model = await self._load_text_model(config["model_id"])
+            else:
+                model = await self._load_image_model(config["model_id"])
+            
+            self.loaded_models[model_type] = model
+            return model
+            
+        except Exception as e:
+            logger.error(f"Error loading model {model_type}: {str(e)}")
+            raise
+    
+    async def _load_text_model(self, model_id: str) -> Any:
+        """Load a text generation model"""
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(model_id)
+            model = AutoModelForCausalLM.from_pretrained(
+                model_id,
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                low_cpu_mem_usage=True,
+                device_map="auto"
+            )
+            return {"model": model, "tokenizer": tokenizer}
+        except Exception as e:
+            logger.error(f"Error loading text model: {str(e)}")
+            raise
+    
+    async def _load_image_model(self, model_id: str) -> Any:
+        """Load an image generation model"""
+        try:
+            pipe = StableDiffusionXLPipeline.from_pretrained(
+                model_id,
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                use_safetensors=True,
+                variant="fp16" if self.device == "cuda" else None
+            )
+            if self.device == "cuda":
+                pipe = pipe.to(self.device)
+            return pipe
+        except Exception as e:
+            logger.error(f"Error loading image model: {str(e)}")
+            raise
+    
+    async def _run_text_generation(self, model: Dict[str, Any], job_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Run text generation"""
+        try:
+            prompt = job_config.get("prompt", "")
+            max_length = min(
+                job_config.get("max_length", 1024),
+                self.model_configs["text-generation"]["max_length"]
+            )
+            
+            inputs = model["tokenizer"](prompt, return_tensors="pt")
+            if self.device == "cuda":
+                inputs = inputs.to(self.device)
+            
+            with torch.no_grad():
+                outputs = model["model"].generate(
+                    **inputs,
+                    max_length=max_length,
+                    num_return_sequences=1,
+                    temperature=job_config.get("temperature", 0.7),
+                    top_p=job_config.get("top_p", 0.9)
+                )
+            
+            response = model["tokenizer"].decode(outputs[0], skip_special_tokens=True)
+            return {"text": response}
+            
+        except Exception as e:
+            logger.error(f"Error in text generation: {str(e)}")
+            raise
+    
+    async def _run_image_generation(self, model: Any, job_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Run image generation"""
+        try:
+            prompt = job_config.get("prompt", "")
+            negative_prompt = job_config.get("negative_prompt", "")
+            
+            image = model(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                num_inference_steps=job_config.get("steps", 30),
+                guidance_scale=job_config.get("guidance_scale", 7.5)
+            ).images[0]
+            
+            # Convert to base64 for API response
+            import io
+            import base64
+            buffered = io.BytesIO()
+            image.save(buffered, format="PNG")
+            image_base64 = base64.b64encode(buffered.getvalue()).decode()
+            
+            return {"image": image_base64}
+            
+        except Exception as e:
+            logger.error(f"Error in image generation: {str(e)}")
+            raise
+    
+    def cleanup(self):
+        """Clean up resources"""
+        try:
             self.loaded_models.clear()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            gc.collect()
+        except Exception as e:
+            logger.error(f"Error in cleanup: {str(e)}")
+
+# Global model runner instance
+model_runner = ModelRunner()

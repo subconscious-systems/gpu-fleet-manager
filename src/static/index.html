@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPU Fleet Manager Demo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+<body class="bg-gray-100">
+    <div id="app" class="container mx-auto px-4 py-8">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-900">GPU Fleet Manager Demo</h1>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <!-- GPU Resources -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">GPU Resources</h2>
+                <div class="space-y-4">
+                    <div v-for="gpu in gpus" :key="gpu.id" 
+                         class="border rounded p-4"
+                         :class="{'bg-green-50': gpu.status === 'available', 'bg-yellow-50': gpu.status === 'in_use'}">
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <h3 class="font-medium">{{ gpu.name }}</h3>
+                                <p class="text-sm text-gray-600">
+                                    Memory: {{ gpu.memory_used }}MB / {{ gpu.memory_total }}MB
+                                </p>
+                            </div>
+                            <span class="px-2 py-1 rounded text-sm"
+                                  :class="{'bg-green-100 text-green-800': gpu.status === 'available',
+                                          'bg-yellow-100 text-yellow-800': gpu.status === 'in_use'}">
+                                {{ gpu.status }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Jobs -->
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">Jobs</h2>
+                
+                <!-- New Job Form -->
+                <form @submit.prevent="submitJob" class="mb-6 space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Model Type</label>
+                        <input v-model="newJob.model_type" type="text" required
+                               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Prompt</label>
+                        <textarea v-model="newJob.prompt" required
+                                 class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"></textarea>
+                    </div>
+                    <button type="submit" 
+                            class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+                        Submit Job
+                    </button>
+                </form>
+
+                <!-- Jobs List -->
+                <div class="space-y-4">
+                    <div v-for="job in jobs" :key="job.id" 
+                         class="border rounded p-4"
+                         :class="{
+                             'bg-blue-50': job.status === 'queued',
+                             'bg-yellow-50': job.status === 'running',
+                             'bg-green-50': job.status === 'completed',
+                             'bg-red-50': job.status === 'failed'
+                         }">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h3 class="font-medium">{{ job.model_type }}</h3>
+                                <p class="text-sm text-gray-600 mt-1">{{ job.prompt }}</p>
+                                <p class="text-xs text-gray-500 mt-2">Created: {{ new Date(job.created_at).toLocaleString() }}</p>
+                            </div>
+                            <span class="px-2 py-1 rounded text-sm"
+                                  :class="{
+                                      'bg-blue-100 text-blue-800': job.status === 'queued',
+                                      'bg-yellow-100 text-yellow-800': job.status === 'running',
+                                      'bg-green-100 text-green-800': job.status === 'completed',
+                                      'bg-red-100 text-red-800': job.status === 'failed'
+                                  }">
+                                {{ job.status }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue
+
+        createApp({
+            data() {
+                return {
+                    gpus: [],
+                    jobs: [],
+                    newJob: {
+                        model_type: '',
+                        prompt: '',
+                        organization_id: 'demo-org', // Demo organization ID
+                        priority: 1
+                    }
+                }
+            },
+            methods: {
+                async fetchGPUs() {
+                    try {
+                        const response = await fetch('/api/v1/gpus?organization_id=demo-org')
+                        this.gpus = await response.json()
+                    } catch (error) {
+                        console.error('Error fetching GPUs:', error)
+                    }
+                },
+                async fetchJobs() {
+                    try {
+                        const response = await fetch('/api/v1/jobs?organization_id=demo-org')
+                        this.jobs = await response.json()
+                    } catch (error) {
+                        console.error('Error fetching jobs:', error)
+                    }
+                },
+                async submitJob() {
+                    try {
+                        const response = await fetch('/api/v1/jobs', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(this.newJob)
+                        })
+                        
+                        if (response.ok) {
+                            this.newJob.model_type = ''
+                            this.newJob.prompt = ''
+                            await this.fetchJobs()
+                        }
+                    } catch (error) {
+                        console.error('Error submitting job:', error)
+                    }
+                },
+                startPolling() {
+                    setInterval(() => {
+                        this.fetchGPUs()
+                        this.fetchJobs()
+                    }, 5000)
+                }
+            },
+            mounted() {
+                this.fetchGPUs()
+                this.fetchJobs()
+                this.startPolling()
+            }
+        }).mount('#app')
+    </script>
+</body>
+</html>
