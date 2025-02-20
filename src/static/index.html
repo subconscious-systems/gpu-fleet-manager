@@ -6,39 +6,71 @@
     <title>GPU Fleet Manager Demo</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #FAFAFA;
+        }
         .gpu-card {
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
+            border: 1px solid #E5E7EB;
         }
         .gpu-card:hover {
-            transform: translateY(-5px);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
-        .explanation-card {
-            background: rgba(255, 255, 255, 0.9);
-            backdrop-filter: blur(10px);
+        .card {
+            background: white;
+            border: 1px solid #E5E7EB;
+            border-radius: 12px;
         }
-        .demo-section {
-            scroll-margin-top: 2rem;
+        .progress-bar {
+            transition: width 0.3s ease;
+        }
+        .btn-primary {
+            background-color: #2563EB;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .btn-primary:hover {
+            background-color: #1D4ED8;
+        }
+        .input-field {
+            border: 1px solid #E5E7EB;
+            border-radius: 8px;
+            padding: 0.5rem;
+            width: 100%;
+            transition: all 0.2s;
+        }
+        .input-field:focus {
+            border-color: #2563EB;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
         }
     </style>
 </head>
-<body class="bg-gray-50">
+<body>
     <div id="app" class="min-h-screen">
         <!-- Navigation -->
-        <nav class="bg-white shadow-lg">
-            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <nav class="bg-white border-b border-gray-200">
+            <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between h-16">
-                    <div class="flex">
-                        <div class="flex-shrink-0 flex items-center">
-                            <h1 class="text-2xl font-bold text-gray-800">GPU Fleet Manager</h1>
-                        </div>
+                    <div class="flex items-center">
+                        <h1 class="text-xl font-semibold text-gray-900">GPU Fleet Manager</h1>
                     </div>
                     <div class="flex items-center space-x-4">
-                        <button @click="currentView = 'demo'" class="px-4 py-2 rounded-md" :class="currentView === 'demo' ? 'bg-blue-500 text-white' : 'bg-gray-200'">
+                        <button @click="currentView = 'demo'" 
+                                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                                :class="currentView === 'demo' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:text-gray-900'">
                             Demo
                         </button>
-                        <button @click="currentView = 'learn'" class="px-4 py-2 rounded-md" :class="currentView === 'learn' ? 'bg-blue-500 text-white' : 'bg-gray-200'">
+                        <button @click="currentView = 'learn'"
+                                class="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                                :class="currentView === 'learn' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:text-gray-900'">
                             Learn
                         </button>
                     </div>
@@ -47,34 +79,43 @@
         </nav>
 
         <!-- Main Content -->
-        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <main class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <!-- Demo View -->
             <div v-if="currentView === 'demo'" class="space-y-8">
                 <!-- GPU Overview -->
-                <section class="demo-section">
-                    <h2 class="text-2xl font-semibold mb-4">Available GPUs</h2>
+                <section>
+                    <h2 class="text-lg font-semibold text-gray-900 mb-4">Available GPUs</h2>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <div v-for="gpu in gpus" :key="gpu.id" class="gpu-card bg-white rounded-lg shadow-md p-6">
+                        <div v-for="gpu in gpus" :key="gpu.id" class="gpu-card bg-white rounded-xl p-6">
                             <div class="flex items-center justify-between mb-4">
-                                <h3 class="text-lg font-medium">{{ gpu.name }}</h3>
-                                <span :class="getStatusClass(gpu.status)" class="px-3 py-1 rounded-full text-sm">
+                                <h3 class="text-sm font-medium text-gray-900">{{ gpu.name }}</h3>
+                                <span :class="getStatusClass(gpu.status)" 
+                                      class="px-3 py-1 rounded-full text-xs font-medium">
                                     {{ gpu.status }}
                                 </span>
                             </div>
-                            <div class="space-y-2">
-                                <div class="flex justify-between">
-                                    <span class="text-gray-600">Memory Usage</span>
-                                    <span>{{ gpu.memoryUsed }}GB / {{ gpu.memoryTotal }}GB</span>
+                            <div class="space-y-4">
+                                <div>
+                                    <div class="flex justify-between text-sm mb-1">
+                                        <span class="text-gray-500">Memory Usage</span>
+                                        <span class="text-gray-900">{{ gpu.memoryUsed }}GB / {{ gpu.memoryTotal }}GB</span>
+                                    </div>
+                                    <div class="w-full bg-gray-100 rounded-full h-1.5">
+                                        <div class="bg-blue-500 rounded-full h-1.5 progress-bar" 
+                                             :style="{ width: (gpu.memoryUsed/gpu.memoryTotal * 100) + '%' }">
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="w-full bg-gray-200 rounded-full h-2">
-                                    <div class="bg-blue-500 rounded-full h-2" :style="{ width: (gpu.memoryUsed/gpu.memoryTotal * 100) + '%' }"></div>
-                                </div>
-                                <div class="flex justify-between">
-                                    <span class="text-gray-600">Utilization</span>
-                                    <span>{{ gpu.utilization }}%</span>
-                                </div>
-                                <div class="w-full bg-gray-200 rounded-full h-2">
-                                    <div class="bg-green-500 rounded-full h-2" :style="{ width: gpu.utilization + '%' }"></div>
+                                <div>
+                                    <div class="flex justify-between text-sm mb-1">
+                                        <span class="text-gray-500">Utilization</span>
+                                        <span class="text-gray-900">{{ gpu.utilization }}%</span>
+                                    </div>
+                                    <div class="w-full bg-gray-100 rounded-full h-1.5">
+                                        <div class="bg-green-500 rounded-full h-1.5 progress-bar"
+                                             :style="{ width: gpu.utilization + '%' }">
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -82,94 +123,107 @@
                 </section>
 
                 <!-- Job Management -->
-                <section class="demo-section">
-                    <h2 class="text-2xl font-semibold mb-4">Submit a New Job</h2>
-                    <div class="bg-white rounded-lg shadow-md p-6">
-                        <form @submit.prevent="submitJob" class="space-y-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">Job Name</label>
-                                <input v-model="newJob.name" type="text" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">Model Type</label>
-                                <select v-model="newJob.modelType" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-                                    <option value="stable-diffusion">Stable Diffusion (Image Generation)</option>
-                                    <option value="llama2">LLaMA 2 (Text Generation)</option>
-                                    <option value="whisper">Whisper (Speech Recognition)</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700">Priority</label>
-                                <select v-model="newJob.priority" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
-                                    <option value="low">Low</option>
-                                    <option value="medium">Medium</option>
-                                    <option value="high">High</option>
-                                </select>
-                            </div>
-                            <button type="submit" class="w-full bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600">
-                                Submit Job
-                            </button>
-                        </form>
-                    </div>
+                <section class="card p-6">
+                    <h2 class="text-lg font-semibold text-gray-900 mb-4">Submit a New Job</h2>
+                    <form @submit.prevent="submitJob" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Job Name</label>
+                            <input v-model="newJob.name" type="text" 
+                                   class="input-field"
+                                   placeholder="Enter job name">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Model Type</label>
+                            <select v-model="newJob.modelType" class="input-field">
+                                <option value="stable-diffusion">Stable Diffusion (Image Generation)</option>
+                                <option value="llama2">LLaMA 2 (Text Generation)</option>
+                                <option value="whisper">Whisper (Speech Recognition)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Priority</label>
+                            <select v-model="newJob.priority" class="input-field">
+                                <option value="low">Low Priority</option>
+                                <option value="medium">Medium Priority</option>
+                                <option value="high">High Priority</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn-primary w-full">
+                            Submit Job
+                        </button>
+                    </form>
                 </section>
 
                 <!-- Active Jobs -->
-                <section class="demo-section">
-                    <h2 class="text-2xl font-semibold mb-4">Active Jobs</h2>
-                    <div class="bg-white rounded-lg shadow-md overflow-hidden">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
-                                <tr>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job Name</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Model</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Progress</th>
-                                </tr>
-                            </thead>
-                            <tbody class="bg-white divide-y divide-gray-200">
-                                <tr v-for="job in activeJobs" :key="job.id">
-                                    <td class="px-6 py-4 whitespace-nowrap">{{ job.name }}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap">{{ job.modelType }}</td>
-                                    <td class="px-6 py-4 whitespace-nowrap">
-                                        <span :class="getJobStatusClass(job.status)" class="px-2 py-1 rounded-full text-sm">
-                                            {{ job.status }}
-                                        </span>
-                                    </td>
-                                    <td class="px-6 py-4 whitespace-nowrap">
-                                        <div class="w-full bg-gray-200 rounded-full h-2">
-                                            <div class="bg-blue-500 rounded-full h-2" :style="{ width: job.progress + '%' }"></div>
-                                        </div>
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
+                <section>
+                    <h2 class="text-lg font-semibold text-gray-900 mb-4">Active Jobs</h2>
+                    <div class="card overflow-hidden">
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job Name</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Model</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Progress</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white divide-y divide-gray-200">
+                                    <tr v-for="job in activeJobs" :key="job.id">
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ job.name }}</td>
+                                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ job.modelType }}</td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <span :class="getJobStatusClass(job.status)" 
+                                                  class="px-2 py-1 rounded-full text-xs font-medium">
+                                                {{ job.status }}
+                                            </span>
+                                        </td>
+                                        <td class="px-6 py-4 whitespace-nowrap">
+                                            <div class="w-full bg-gray-100 rounded-full h-1.5">
+                                                <div class="bg-blue-500 rounded-full h-1.5 progress-bar"
+                                                     :style="{ width: job.progress + '%' }">
+                                                </div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </section>
             </div>
 
             <!-- Learn View -->
             <div v-if="currentView === 'learn'" class="space-y-8">
-                <section class="bg-white rounded-lg shadow-md p-6">
-                    <h2 class="text-2xl font-semibold mb-4">How It Works</h2>
+                <div class="card p-8">
+                    <h2 class="text-lg font-semibold text-gray-900 mb-6">How It Works</h2>
                     <div class="space-y-6">
-                        <div class="explanation-card p-4 rounded-lg border border-gray-200">
-                            <h3 class="text-lg font-medium mb-2">🎮 GPU Resources</h3>
-                            <p class="text-gray-600">GPUs are like powerful gaming computers that help run AI models. Think of them as specialized workers that can process complex tasks very quickly. Our system manages these workers efficiently.</p>
+                        <div class="p-6 rounded-xl bg-blue-50 border border-blue-100">
+                            <h3 class="text-base font-medium text-blue-900 mb-2">🎮 GPU Resources</h3>
+                            <p class="text-blue-700 text-sm leading-relaxed">
+                                Think of GPUs as powerful gaming computers that help run AI models. They're like specialized workers that can process complex tasks very quickly. Our system manages these workers efficiently, making sure they're always doing their best work.
+                            </p>
                         </div>
-                        <div class="explanation-card p-4 rounded-lg border border-gray-200">
-                            <h3 class="text-lg font-medium mb-2">📋 Job Queue</h3>
-                            <p class="text-gray-600">When you submit a job (like generating an image or analyzing text), it goes into a smart waiting line. Jobs are assigned to available GPUs based on priority and resource requirements.</p>
+                        <div class="p-6 rounded-xl bg-green-50 border border-green-100">
+                            <h3 class="text-base font-medium text-green-900 mb-2">📋 Smart Job Queue</h3>
+                            <p class="text-green-700 text-sm leading-relaxed">
+                                When you submit a job (like generating an image or analyzing text), it goes into an intelligent waiting line. Just like a well-organized restaurant kitchen, jobs are assigned to available GPUs based on priority and specific requirements.
+                            </p>
                         </div>
-                        <div class="explanation-card p-4 rounded-lg border border-gray-200">
-                            <h3 class="text-lg font-medium mb-2">📊 Resource Management</h3>
-                            <p class="text-gray-600">Our system automatically balances the workload across all GPUs, ensuring efficient use of resources. It's like a traffic controller making sure all lanes are moving smoothly.</p>
+                        <div class="p-6 rounded-xl bg-purple-50 border border-purple-100">
+                            <h3 class="text-base font-medium text-purple-900 mb-2">📊 Resource Management</h3>
+                            <p class="text-purple-700 text-sm leading-relaxed">
+                                Our system works like a smart traffic controller, automatically balancing workloads across all GPUs. This ensures that resources are used efficiently and no GPU is overwhelmed while others sit idle.
+                            </p>
                         </div>
-                        <div class="explanation-card p-4 rounded-lg border border-gray-200">
-                            <h3 class="text-lg font-medium mb-2">💰 Cost Optimization</h3>
-                            <p class="text-gray-600">We track GPU usage and help optimize costs by efficiently allocating resources. This means you get the most value out of your GPU infrastructure.</p>
+                        <div class="p-6 rounded-xl bg-orange-50 border border-orange-100">
+                            <h3 class="text-base font-medium text-orange-900 mb-2">💰 Cost Optimization</h3>
+                            <p class="text-orange-700 text-sm leading-relaxed">
+                                We carefully track GPU usage and optimize costs, similar to how a smart thermostat manages energy usage in your home. This means you get the most value out of your GPU infrastructure without unnecessary expenses.
+                            </p>
                         </div>
                     </div>
-                </section>
+                </div>
             </div>
         </main>
     </div>
