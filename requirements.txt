@@ -25,3 +25,4 @@ transformers==4.35.2
 diffusers==0.23.0
 accelerate==0.27.2
 huggingface-hub==0.20.3
+nvidia-ml-py3==7.352.0

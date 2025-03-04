@@ -3,6 +3,7 @@ from typing import Dict, Any, List
 import psutil
 import logging
 from datetime import datetime
+from src.utils.gpu_metrics import get_formatted_gpu_metrics, initialize_nvml, shutdown_nvml, start_metrics_collection
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -57,28 +58,27 @@ async def get_metrics():
 
 @router.get("/gpu-metrics", response_model=Dict[str, Any])
 async def get_gpu_metrics():
-    """Get GPU metrics"""
+    """Get GPU metrics using NVML"""
     try:
-        # TODO: Implement actual GPU metrics collection
-        # This is a placeholder that would be replaced with actual GPU monitoring
-        return {
-            "timestamp": datetime.utcnow().isoformat(),
-            "gpus": [
-                {
-                    "id": "gpu-1",
-                    "utilization": 75.5,
-                    "memory": {
-                        "total": 16384,
-                        "used": 8192,
-                        "free": 8192
-                    },
-                    "temperature": 65
-                }
-            ]
-        }
+        # Get GPU metrics using our new module
+        metrics = get_formatted_gpu_metrics()
+        return metrics
     except Exception as e:
         logger.error(f"Failed to get GPU metrics: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get GPU metrics: {str(e)}"
         )
+
+# Initialize NVML when the module is loaded
+try:
+    initialize_nvml()
+    # Start collecting metrics in the background every 30 seconds
+    start_metrics_collection(interval_seconds=30)
+    logger.info("NVML initialized and background metrics collection started")
+except Exception as e:
+    logger.error(f"Failed to initialize NVML: {str(e)}")
+
+# Ensure NVML is properly shut down when the application exits
+import atexit
+atexit.register(shutdown_nvml)
