@@ -9,38 +9,53 @@ from contextlib import asynccontextmanager
 from src.api import jobs, gpus, monitoring
 from src.utils.monitoring import setup_monitoring
 from dotenv import load_dotenv
+from src.config import get_settings
+from src.config.utils import configure_logging, get_api_cors_origins, build_api_url, is_development_mode
 
 # Load environment variables
 load_dotenv()
 
+# Initialize settings
+settings = get_settings()
+
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start monitoring in the background
-    monitoring_task = asyncio.create_task(setup_monitoring(metrics_port=9402))  # Changed from 9401
+    # Start monitoring in the background if enabled
+    if settings.monitoring.enable_prometheus:
+        monitoring_task = asyncio.create_task(
+            setup_monitoring(metrics_port=settings.monitoring.prometheus_port)
+        )
+        logger.info(f"Prometheus metrics enabled on port {settings.monitoring.prometheus_port}")
+    else:
+        monitoring_task = None
+        logger.info("Prometheus metrics disabled")
+    
     yield
-    # Cancel monitoring on shutdown
-    monitoring_task.cancel()
-    try:
-        await monitoring_task
-    except asyncio.CancelledError:
-        pass
+    
+    # Cancel monitoring on shutdown if it was started
+    if monitoring_task:
+        monitoring_task.cancel()
+        try:
+            await monitoring_task
+        except asyncio.CancelledError:
+            pass
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="GPU Fleet Manager",
+    title=settings.project_name,
     description="API for managing GPU jobs and resources",
-    version="1.0.0",
+    version=settings.api_version,
     lifespan=lifespan
 )
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_api_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -50,22 +65,25 @@ app.add_middleware(
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+# API prefix based on configuration
+api_prefix = f"/api/{settings.api_version}"
+
 # Include routers
 app.include_router(
     jobs.router,
-    prefix="/api/v1",
+    prefix=api_prefix,
     tags=["jobs"]
 )
 
 app.include_router(
     gpus.router,
-    prefix="/api/v1",
+    prefix=api_prefix,
     tags=["gpus"]
 )
 
 app.include_router(
     monitoring.router,
-    prefix="/api/v1",
+    prefix=api_prefix,
     tags=["monitoring"]
 )
 
@@ -80,8 +98,18 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "environment": settings.environment,
+        "version": settings.api_version
+    }
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app", 
+        host=settings.api.host, 
+        port=settings.api.port,
+        reload=settings.api.reload,
+        workers=settings.api.workers
+    )

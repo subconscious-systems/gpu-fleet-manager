@@ -25,6 +25,50 @@ graph TD
 
 ## 1. Database Layer
 
+### Database Schema
+
+The GPU Fleet Manager uses a PostgreSQL database with a comprehensive schema designed for multi-tenant isolation, performance, and scalability. The schema is organized into two main components:
+
+#### Core Multi-Tenant Components
+
+These tables handle user authentication, organization management, and API integrations:
+
+1. **Users & Organizations**: 
+   - `users`: User profiles and authentication
+   - `organizations`: Tenant accounts
+   - `organization_members`: User membership in organizations
+   - `organization_invites`: Invitations to join organizations
+
+2. **API Integration**:
+   - `api_keys`: API authentication for programmatic access
+   - `webhooks`: Notification endpoints for events
+   - `webhook_deliveries`: Delivery history for webhooks
+
+#### GPU Management Components
+
+These tables manage GPU resources, job processing, and metrics:
+
+1. **GPU Resources**:
+   - `gpu_resources`: Available GPU hardware
+   - `gpu_metrics`: Performance metrics for GPUs
+
+2. **Job Processing**:
+   - `jobs`: Computational tasks executed on GPUs
+   - `cost_tracking`: Financial data for GPU usage
+
+3. **Predictions**:
+   - `predictions`: AI/ML prediction tasks and results
+
+The schema implements these key features:
+
+- **Multi-tenant isolation**: Row-Level Security (RLS) policies ensure data separation
+- **UUID primary keys**: For security and scalability
+- **Consistent timestamps**: All tables include `created_at` and `updated_at` fields
+- **Foreign key constraints**: Explicit relationships between tables
+- **Performance indices**: Optimized for common query patterns
+
+For detailed documentation, see `docs/database_schema.md`.
+
 ### Supabase Client (`src/db/supabase_client.py`)
 
 The foundation of our data access layer, implementing:

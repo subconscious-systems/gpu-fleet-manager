@@ -1,0 +1,300 @@
+// GPU Fleet Manager - Comprehensive Database Schema
+// This schema combines organization management with GPU-specific components
+// for a complete multi-tenant GPU management system.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//=============================================================================
+// Core Multi-tenant Components
+//=============================================================================
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  avatar    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Supabase auth id
+  authId String @unique
+
+  // Organization memberships
+  memberships OrganizationMember[]
+
+  // Default organization
+  defaultOrganization   Organization? @relation("DefaultOrganization", fields: [defaultOrganizationId], references: [id])
+  defaultOrganizationId String?
+
+  // Pending organization invites
+  pendingInvites OrganizationInvite[]
+
+  // Jobs submitted by this user
+  jobs Job[]
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // External integration identifiers
+  stripeCustomerId String?
+
+  // Relationships
+  members         OrganizationMember[]
+  defaultForUsers User[]              @relation("DefaultOrganization")
+  invites         OrganizationInvite[]
+  apiKeys         ApiKey[]
+  webhooks        Webhook[]
+  
+  // GPU Fleet Manager specific relationships
+  gpuResources    GpuResource[]
+  jobs            Job[]
+  costTracking    CostTracking[]
+  predictions     Prediction[]
+}
+
+model OrganizationMember {
+  id        String   @id @default(uuid())
+  role      String   @default("MEMBER") // Can be ADMIN or MEMBER
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  user           User         @relation(fields: [userId], references: [id])
+  userId         String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+model OrganizationInvite {
+  id        String   @id @default(uuid())
+  email     String
+  role      String   @default("MEMBER")
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  expiresAt DateTime
+
+  // Relationships
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  invitedUser    User?       @relation(fields: [userId], references: [id])
+  userId         String?
+
+  @@index([organizationId])
+  @@index([token])
+}
+
+model ApiKey {
+  id        String    @id @default(uuid())
+  name      String
+  key       String    @unique
+  keyHash   String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  lastUsed  DateTime?
+  expiresAt DateTime?
+
+  // Relationships
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+
+  @@index([organizationId])
+  @@index([key])
+}
+
+model Webhook {
+  id            String    @id @default(uuid())
+  url           String
+  events        String[]
+  type          String    @default("job_status")
+  status        String    @default("active") // Can be active or inactive
+  errorRate     Float     @default(0)
+  signingSecret String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastUsed      DateTime?
+  isActive      Boolean   @default(true)
+
+  // Webhook events/deliveries
+  deliveries WebhookDelivery[]
+
+  // Relationships
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+
+  @@index([organizationId])
+}
+
+model WebhookDelivery {
+  id           String   @id @default(uuid())
+  eventType    String
+  payload      Json
+  responseStatus Int?
+  responseBody String?
+  errorMessage String?
+  createdAt    DateTime @default(now())
+
+  // Relationships
+  webhook   Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  webhookId String
+
+  @@index([webhookId])
+  @@index([createdAt])
+}
+
+//=============================================================================
+// GPU Management Components
+//=============================================================================
+
+model GpuResource {
+  id              String   @id @default(uuid())
+  name            String
+  gpuType         String
+  provider        String
+  providerId      String?
+  status          String   @default("available")
+  memoryTotal     BigInt   // Total GPU memory in bytes
+  memoryAllocated BigInt   @default(0) // Currently allocated memory
+  capabilities    Json     @default("{}")
+  costPerHour     Decimal? @db.Decimal(10, 4)
+  isSpot          Boolean  @default(false)
+  spotRequestId   String?
+  terminationTime DateTime?
+  inUse           Boolean  @default(false)
+  metadata        Json?
+  lastActive      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relationships
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  jobs           Job[]
+  metrics        GpuMetric[]
+  costTracking   CostTracking[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([provider])
+  @@index([lastActive])
+}
+
+model GpuMetric {
+  id            String   @id @default(uuid())
+  timestamp     DateTime @default(now())
+  memoryUsed    BigInt
+  memoryTotal   BigInt
+  gpuUtilization Decimal? @db.Decimal(5, 2)
+  powerUsage    Decimal? @db.Decimal(10, 2)
+  temperature   Decimal? @db.Decimal(5, 2)
+
+  // Relationships
+  gpu    GpuResource @relation(fields: [gpuId], references: [id])
+  gpuId  String
+
+  @@index([gpuId])
+  @@index([timestamp])
+}
+
+model Job {
+  id              String    @id @default(uuid())
+  modelType       String
+  modelName       String
+  priority        Int       @default(50)
+  status          String    @default("queued")
+  computeId       String?
+  computeStatus   String?
+  computeLogs     Json?
+  errorMessage    String?
+  memory          Int?      // Memory required in MB
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  // Input/output data
+  input           String?   @db.Text
+  output          String?   @db.Text
+  
+  // Webhook integration
+  webhookId       String?
+  webhookUrl      String?
+
+  // Relationships
+  user           User?         @relation(fields: [userId], references: [id])
+  userId         String?
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  organizationId String
+  gpu            GpuResource?  @relation(fields: [gpuId], references: [id])
+  gpuId          String?
+  costTracking   CostTracking?
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([userId])
+  @@index([gpuId])
+  @@index([createdAt])
+}
+
+model CostTracking {
+  id            String    @id @default(uuid())
+  startTime     DateTime
+  endTime       DateTime?
+  costPerHour   Decimal   @db.Decimal(10, 4)
+  totalCost     Decimal?  @db.Decimal(10, 4)
+  createdAt     DateTime  @default(now())
+
+  // Relationships
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  gpu            GpuResource  @relation(fields: [gpuId], references: [id])
+  gpuId          String
+  job            Job          @relation(fields: [jobId], references: [id])
+  jobId          String       @unique
+
+  @@index([organizationId])
+  @@index([gpuId])
+  @@index([startTime, endTime])
+}
+
+//=============================================================================
+// AI/ML Prediction Components
+//=============================================================================
+
+model Prediction {
+  id                    String    @id @default(uuid())
+  status                String    @default("queued") // Can be queued, running, completed, failed
+  model                 String
+  type                  String    @default("text") // Can be text, image, audio, video, etc.
+  version               String?
+  input                 String    @db.Text
+  output                String?   @db.Text
+  webhookId             String?
+  webhookUrl            String?
+  processingStartedAt   DateTime?
+  processingCompletedAt DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  // Relationships
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([createdAt])
+}
