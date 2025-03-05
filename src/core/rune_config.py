@@ -1,10 +1,36 @@
-from pydantic_settings import BaseSettings
+"""
+Rune.AI API configuration for GPU Fleet Manager
 
-class RuneSettings(BaseSettings):
-    RUNE_API_KEY: str = "ba5de503-952c-4557-aa81-f2d5ccf19450"  # Default from documentation
-    RUNE_API_BASE_URL: str = "https://heartbeat-94692957.us-west1.run.app"  # Updated to match documentation
-    RUNE_CLUSTER_ID: str = "ronin_0"  # Default cluster ID
+This module provides configuration settings for the Rune.AI API integration.
+"""
+
+from pydantic import BaseModel, Field, SecretStr
+from src.config import get_settings
+
+class RuneConfig(BaseModel):
+    """
+    Rune.AI API configuration settings
     
-    class Config:
-        env_prefix = "RUNE_"
-        case_sensitive = False
+    Attributes:
+        api_key: API key for authenticating with Rune.AI
+        base_url: Base URL for Rune.AI API endpoints
+        cluster_id: Identifier for the Rune.AI cluster to use
+    """
+    api_key: SecretStr
+    base_url: str
+    cluster_id: str
+
+def get_rune_config() -> RuneConfig:
+    """
+    Get Rune.AI configuration from the central settings
+    
+    Returns:
+        RuneConfig object with Rune.AI configuration settings
+    """
+    settings = get_settings()
+    
+    return RuneConfig(
+        api_key=settings.gpu_provider.rune_api_key,
+        base_url=settings.gpu_provider.rune_api_base_url,
+        cluster_id=settings.gpu_provider.rune_cluster_id
+    )
